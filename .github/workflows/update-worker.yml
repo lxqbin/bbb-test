@@ -35,19 +35,22 @@ jobs:
         id: get_release
         run: |
           echo -e "\033[34m[获取最新 Release]\033[0m"
-          # 直接使用 latest 接口，返回单个对象，无需处理数组
-          API_URL="https://api.github.com/repos/bia-pain-bache/BPB-Worker-Panel/releases/latest"
+          API_URL="https://api.github.com/repos/bia-pain-bache/BPB-Worker-Panel/releases"
           RESPONSE=$(curl -s "$API_URL")
           
-          # 提取版本号和下载链接
-          TAG_NAME=$(echo "$RESPONSE" | jq -r '.tag_name')
-          DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
+          # 修复点1：先判断数组是否为空，再取第一个元素
+          LATEST_RELEASE=$(echo "$RESPONSE" | jq -r 'if length > 0 then .[0] else empty end')
+          if [ -z "$LATEST_RELEASE" ] || [ "$LATEST_RELEASE" == "null" ]; then
+            echo -e "\033[31m未获取到任何 Release，退出！\033[0m"
+            exit 0  # 无 Release 时正常退出，不报错
+          fi
+          
+          TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+          DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
 
-          # 容错处理：如果没找到 worker.zip，正常退出不报错
           if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" == "null" ]; then
-            echo -e "\033[31m未找到 worker.zip，跳过本次更新。\033[0m"
-            echo "UPDATE_NEEDED=false" >> $GITHUB_ENV
-            exit 0
+            echo -e "\033[31m未找到 worker.zip，退出！\033[0m"
+            exit 0  # 无文件时正常退出，不报错
           fi
 
           echo "最新版本号: $TAG_NAME"
@@ -66,11 +69,11 @@ jobs:
             echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
           fi
 
-      - name: 清理旧文件并下载新版本
+      - name: 如果需要，清理旧文件并下载新版本
         if: env.UPDATE_NEEDED == 'true'
         run: |
           echo -e "\033[34m[清理旧文件]\033[0m"
-          # 保留 .github 目录和 version.txt，避免误删 workflow
+          # 保留关键文件，避免误删 workflow 和 version.txt
           shopt -s extglob
           rm -rf !(.github|version.txt)
           shopt -u extglob
@@ -78,10 +81,10 @@ jobs:
           echo -e "\033[34m[下载最新 worker.zip]\033[0m"
           wget -O worker.zip "$DOWNLOAD_URL"
           echo -e "\033[34m[解压 worker.zip]\033[0m"
-          unzip -o worker.zip  # -o 强制覆盖，避免交互
-          echo -e "\033[34m[删除压缩包]\033[0m"
+          unzip -o worker.zip  # -o 覆盖已存在文件
+          echo -e "\033[34m[删除 worker.zip]\033[0m"
           rm worker.zip
-          echo -e "\033[34m[更新版本号]\033[0m"
+          echo -e "\033[34m[记录新版本号]\033[0m"
           echo "$TAG_NAME" > version.txt
 
       - name: 提交更改
